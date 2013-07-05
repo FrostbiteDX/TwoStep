@@ -1,0 +1,378 @@
+#ifndef __CALIB_MODULE__
+#define __CALIB_MODULE__
+
+// Includes only for testing purposes. Must be in this order in the main file
+
+#include "SensorModule.nxc"
+#include "MotorUnit.nxc"
+// #include "CalibModule.nxc"
+
+//######################################################
+// Calibration Module
+//
+// Authors: Alexander Strobl, Daniel Tatzel
+//######################################################
+
+//######################################################
+// Declarations
+//######################################################
+
+// Compass reference value used for calibration
+short CU_TempCompassRef = -1;
+byte flag = 0;
+      /*
+
+/* Function: CU_CheckObstacle
+	- Checks for obstacles in the path of the robot
+	- Throws a stop event if an unexpected obstacle appears
+*/
+void CU_CheckObstacle( byte xpos, byte ypos, short orientation );
+
+
+/* Function: CU_CalibCompassValue
+	- Matches the virtual direction and the real direction to get the difference between target state and actual state
+	- Variables:
+		- orientation: virtuel direction on the map
+		- Offset: Difference between virtual and real direction
+*/
+unsigned short CU_CalibCompassValue( short orientation, short Offset );
+
+
+/* Function: CU_GetAzimuth
+	- Calculates the difference in degrees between target and actual state to change the direction of the robot
+	- Needs the value of CU_CalibCompassValue( orientation, SU_InitCompassValue )
+*/
+short CU_GetAzimuth( short degree, short currentdeg );
+
+
+/* Function: CU_GetAzimuthPositve
+	- Calculates the difference in degrees between target and actual state to change the direction of the robot
+	- Needs the value of CU_CalibCompassValue( orientation, SU_InitCompassValue )
+	- Returns olny postive numbers
+*/
+//short CU_GetAzimuthPositive( short degree );
+
+
+/* Function: CU_Measuring_front
+	- Measures the distance to the next object to the front (only if in range)
+	- Adjusts the Position of the robot according to the distance between the object and robot
+*/
+void CU_Measuring_front( byte FieldRange_front );
+
+
+/* Function: CU_Measuring_rear
+	- Measures the distance to the next object to the rear (only if in range)
+	- Adjusts the Position of the robot according to the distance between the object and robot
+*/
+void CU_Measuring_rear( byte FieldRange_rear );
+
+
+/* Function: CU_TurnToOrientation
+	- Aligns the robot to the driving direction
+*/
+//void CU_TurnToOrientation( short orientation );
+
+
+/* Function: CU_Drift
+	- Calculates if the robot drifted to the right or left after driving
+*/
+void CU_Drift( short orientation, byte xpos, byte ypos );
+
+
+/* Function: CU_PosCalibration
+	- Must be started from the control unit
+	- Needs: actual x and y coordiante and orientation of the robot
+	- Calls all other funtctions
+	- Checks:
+		- Deviation
+		- Looks for the next obstacle to the front and rear (uses virtual map and actual position)
+		- Corrects the alignment of the robot to the actual virtual orientation (on the map)
+		- Measures distances
+*/
+int CU_PosCalibration( byte xpos, byte ypos, short orientation );
+
+
+//######################################################
+// Defines
+//######################################################
+
+// Should be adjusted, just first idea
+// #define CU_CriticalDistance 5
+
+//######################################################
+// Functions and tasks
+//######################################################
+
+unsigned short CU_CalibCompassValue( short orientation, short Offset )
+{
+	int help = orientation + Offset;
+
+	if ( help >= 360 )
+		help -= 360;
+
+	if ( help < 0 )
+		help += 360;
+
+	return help;
+}
+
+/*
+short CU_GetAzimuthPositive( short degree, short CurrentDegree )
+{
+	if ( degree < CurrentDegree)
+		return CurrentDegree - degree;
+	if ( degree > CurrentDegree)
+		return degree + CurrentDegree;
+}*/
+
+short CU_GetAzimuth( short degree, short currentdeg )
+{
+	short tmpdeg = degree - currentdeg;
+	//NumOut(50, LCD_LINE4, SU_Values.iCurrentDeg);
+	
+	// unnötig weite Drehwinkel reduzieren ( >180° = unnötig!)
+	if ( tmpdeg > 180 )
+		tmpdeg -= 360;
+	if(tmpdeg < -180)
+		tmpdeg += 360;
+
+	return tmpdeg;
+}
+
+void CU_Measuring_front( byte FieldRange_front )
+{
+     short soll_distanz = FieldRange_front * GLOBAL_1_SEKTOR;
+
+     if ( soll_distanz <= SU_SONIC_RADIUS && FieldRange_front != 0 )   // nicht messen wenn wand zu weit weg
+     {
+        // stehen nicht an da wand und wand in reichweite
+			  until(!MutexUSonic);
+			  SU_Values.iDistance_Front = SensorUS ( SU_SONIC_FRONT );
+			  short FrontDistance = SU_Values.iDistance_Front;
+
+        TextOut( 0, LCD_LINE4, "Front:" );
+			  NumOut( 50, LCD_LINE4, FrontDistance );
+
+        if( soll_distanz < FrontDistance)
+        {
+           // Wand zu weit weg
+           // -> an die rückwand hinfahren
+           NumOut(0, LCD_LINE3, FrontDistance - soll_distanz );
+           MU_drive( FrontDistance - soll_distanz );
+
+           // -1 (rückwärts fahren) * (FrontDistance - FieldRange_front * GLOBAL_1_SEKTOR) (differenzbetrag)
+        }
+        else if ( soll_distanz > FrontDistance)
+        {
+           // Wand zu nah dran
+           // -> von der rückwand wegfahren
+           NumOut(0, LCD_LINE3, -1 * (soll_distanz - FrontDistance ) );
+           MU_drive( -1 * (soll_distanz - FrontDistance ) );
+        }
+     }
+}
+
+void CU_Measuring_rear( byte FieldRange_rear)
+{
+     short soll_distanz = FieldRange_rear * GLOBAL_1_SEKTOR;
+     
+     if ( soll_distanz <= SU_SONIC_RADIUS && FieldRange_rear != 0 )   // nicht messen wenn wand zu weit weg
+     {
+        // stehen nicht an da wand und wand in reichweite
+			  until(!MutexUSonic);
+			  SU_Values.iDistance_Back = SensorUS ( SU_SONIC_BACK );
+			  short BackDistance = SU_Values.iDistance_Back;
+
+        TextOut( 0, LCD_LINE4, "Back:" );
+			  NumOut( 50, LCD_LINE4, BackDistance );
+
+        if( soll_distanz < BackDistance)
+        {
+           // Wand zu weit weg
+           // -> an die rückwand hinfahren
+           NumOut(0, LCD_LINE3, -1 * (BackDistance - soll_distanz) );
+           MU_drive( -1 * (BackDistance - soll_distanz) );
+           
+           // -1 (rückwärts fahren) * (BackDistance - FieldRange_rear * GLOBAL_1_SEKTOR) (differenzbetrag)
+        }
+        else if ( soll_distanz > BackDistance)
+        {
+           // Wand zu nah dran
+           // -> von der rückwand wegfahren
+           NumOut(0, LCD_LINE3, soll_distanz - BackDistance );
+           MU_drive( soll_distanz - BackDistance );
+        }
+     }
+}
+
+
+//#define _MULTICALIBRATE_ANGLE_
+void CU_Drift( short orientation, byte xpos, byte ypos )
+{
+	Wait(300);
+	
+	Acquire(MutexCmps);
+	Acquire(MutexCmps2);
+	
+	unsigned short degree = CU_CalibCompassValue( orientation, SU_InitCompassValue );
+	unsigned short degree2 = CU_CalibCompassValue( orientation, SU_InitCompassValue2 );
+	
+	short degreetoturn = CU_GetAzimuth( degree, SU_Values.iCurrentDeg );
+	short degreetoturn2 = CU_GetAzimuth( degree2, SU_Values.iCurrentDeg2 );
+	short degreetoturntotal = (degreetoturn + degreetoturn2) / 2;
+	
+	 /*
+	short diffOfSensors = SU_Values.iCurrentDeg > SU_Values.iCurrentDeg2 ? SU_Values.iCurrentDeg - SU_Values.iCurrentDeg2 : SU_Values.iCurrentDeg2 - SU_Values.iCurrentDeg;
+	diffOfSensors /= 5;
+	if(diffOfSensors == 0) diffOfSensors = 1;
+	 */
+	
+	Release(MutexCmps);
+	Release(MutexCmps2);
+	
+	NumOut(0, LCD_LINE3, SU_Values.iCurrentDeg);
+	NumOut(40, LCD_LINE3, degree);
+	NumOut(80, LCD_LINE3, degreetoturn);
+	
+	NumOut(0, LCD_LINE4, SU_Values.iCurrentDeg2);
+	NumOut(40, LCD_LINE4, degree2);
+	NumOut(80, LCD_LINE4, degreetoturn2);
+	
+	NumOut(80, LCD_LINE5, degreetoturntotal);
+	Wait(5000);
+	ClearLine(LCD_LINE3);
+	ClearLine(LCD_LINE4);
+	ClearLine(LCD_LINE5);
+	
+	//MU_drehen_by_angle( degreetoturntotal / diffOfSensors);
+	
+	MU_drehen_by_angle( degreetoturntotal );
+	
+	     /*
+	#ifdef _MULTICALIBRATE_ANGLE_
+	for (int i = 0; i < 2; i++)
+	{	
+		CU_Drift_help(orientation, xpos, ypos, i);
+	}		
+	#endif  */
+	
+}
+
+#ifdef _MULTICALIBRATE_ANGLE_
+void CU_Drift_help(short orientation, byte xpos, byte ypos, short iCount)
+{
+	if (iCount < 2)
+		CU_Drift(short orientation, byte xpos, byte ypos);
+}
+#endif
+
+void CU_PosCalibration( byte xpos, byte ypos, short orientation )
+{
+	byte tmpx = xpos;
+	byte tmpy = ypos;
+	byte FieldRange_front = 0;
+	byte FieldRange_rear = 0;
+
+	//CU_Drift( orientation, xpos, ypos );	// korrigiert die Position des Roboters senkrecht zur Fahrtrichtung zurück in die Fahrrinne
+	
+	TextOut(0, LCD_LINE1, "Orientiert: ");
+	NumOut(70, LCD_LINE1, orientation);
+	
+	Wait(2000);
+	
+	if ( 0 == orientation || 180 == orientation ) // Nord & Sued Ausrichtung
+	{
+		while ( true )
+		{
+			tmpy--;
+			if ( g_MapModule_WorkField.map[GLOBAL_MAP_WIDTH * tmpy + xpos] == '#')
+			{
+				tmpy++;
+				if ( 0 == orientation )
+				{
+					FieldRange_front = ( ypos - tmpy ); // * GLOBAL_1_SEKTOR;
+				}
+				else if ( 180 == orientation )
+				{
+					FieldRange_rear = ( ypos - tmpy ); // * GLOBAL_1_SEKTOR;
+				}
+				break;
+			}
+		}
+
+		while ( true )
+		{
+			tmpy++;
+			if ( '#' == g_MapModule_WorkField.map[GLOBAL_MAP_WIDTH * tmpy + xpos] )
+			{
+				tmpy--;
+				if ( 0 == orientation )
+				{
+					FieldRange_rear = ( tmpy - ypos ); // * GLOBAL_1_SEKTOR;
+				}
+				else if ( 180 == orientation )
+				{
+					FieldRange_front = ( tmpy - ypos ); // * GLOBAL_1_SEKTOR;
+				}
+				break;
+			}
+		}
+  }
+
+	if ( 90 == orientation || 270 == orientation ) // Ost & West Ausrichtung
+	{
+		while ( true )
+		{
+			tmpx--;
+			if ( '#' == g_MapModule_WorkField.map[GLOBAL_MAP_WIDTH * ypos + tmpx] )
+			{
+				tmpx++;
+				if ( 90 == orientation )
+				{
+					FieldRange_rear = ( xpos - tmpx ); // * GLOBAL_1_SEKTOR;
+				}
+				else if (270 == orientation )
+				{
+					FieldRange_front = ( xpos - tmpx ); // * GLOBAL_1_SEKTOR;
+				}
+				break;
+			}
+
+		}
+
+    tmpx = xpos;
+    
+		while ( true )
+		{
+			tmpx++;
+			if ( '#' == g_MapModule_WorkField.map[GLOBAL_MAP_WIDTH * ypos + tmpx] )
+			{
+				tmpx--;
+				if ( 90 == orientation )
+				{
+					FieldRange_front = ( tmpx - xpos ); // * GLOBAL_1_SEKTOR;
+				}
+				else if ( 270 == orientation )
+				{
+					FieldRange_rear = ( tmpx - xpos); // * GLOBAL_1_SEKTOR;
+				}
+				break;
+			}
+		}
+	}
+	
+	ClearScreen();
+  
+	NumOut(0, LCD_LINE5, FieldRange_front);
+	NumOut(0, LCD_LINE6, FieldRange_rear);
+	
+	NumOut(40, LCD_LINE5, xpos);
+	NumOut(40, LCD_LINE6, ypos);
+
+	CU_Measuring_front( FieldRange_front );
+	CU_Measuring_rear( FieldRange_rear );
+
+	CU_TempCompassRef = SU_Values.iCurrentDeg;
+}
+
+#endif /* __CALIB_MODULE__ */

@@ -1,0 +1,15 @@
+#include "SteersmanModule.nxc"
+#include "SensorModule.nxc"
+#include "MotorUnit.nxc"
+
+task main()
+{
+     unsigned int i = SU_InitSensors(200);
+     if( i == 0)
+     {
+         MU_start_all_features();
+         Steersman_init();
+     }
+     else
+         TextOut(0,0,"SensorInit Failed");
+}
